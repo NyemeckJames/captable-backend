@@ -141,7 +141,7 @@ You are an expert in designing robust, scalable, and maintainable backend archit
 - Strict separation of responsibilities (Domain, Application, Infrastructure) for better readability and evolution
 - Implementation of hexagonal architecture (ports and adapters) to ensure independence from frameworks or databases
 
-🎯 In this context, your role is to design the backend architecture of a Cap Table management application. The objective is to model this architecture at the conceptual level, without framework implementation (no FastAPI code for example), defining only entities, relationships, aggregates, business rules, and logical structuring of the application.
+In this context, your role is to design the backend architecture of a Cap Table management application. The objective is to model this architecture at the conceptual level, without framework implementation (no FastAPI code for example), defining only entities, relationships, aggregates, business rules, and logical structuring of the application.
 ```
 
 ### 2. Business Domain Analysis Prompt
@@ -149,14 +149,14 @@ You are an expert in designing robust, scalable, and maintainable backend archit
 ```
 The business logic of a Cap Table (capitalization table) is detailed in the provided business document. Analyze this document carefully to understand the entities, their interactions, and associated workflows.
 
-✨ Based on the functional requirements below, design a backend architecture aligned with Domain-Driven Design (DDD), Clean Architecture, and hexagonal architecture principles.
+Based on the functional requirements below, design a backend architecture aligned with Domain-Driven Design (DDD), Clean Architecture, and hexagonal architecture principles.
 
 This architecture must:
 - Be modular, scalable, and testable
 - Leverage good patterns where they bring real value
 - Remain sufficiently simple and pragmatic, consistent with the modest size of the project
 
-📋 Functional Requirements (User Stories)
+Functional Requirements (User Stories)
 [Detailed user stories for Admin and Shareholder roles...]
 ```
 
@@ -167,7 +167,7 @@ You are a senior backend developer expert in FastAPI, specialized in technical i
 
 Given the logical architecture, classes, and associations of a Cap Table application attached, you will now:
 
-🛠️ Implement this architecture concretely in several steps:
+Implement this architecture concretely in several steps:
 - Create the complete associated project tree structure in the active directory
 - Generate necessary files with structuring code: business entities, value objects, persistence models, service interfaces (ports), etc.
 - Write each file progressively, starting from domain foundations up to the highest layer
@@ -180,14 +180,12 @@ The objective is to build a solid, clear, extensible project foundation.
 ### Admin Features
 - Authentication and secure login
 - Dashboard with shareholder overview and total share counts
-- Shareholding distribution visualization (pie chart)
 - Add new shareholders (name, email)
 - Initiate share emission processes
 - Generate watermarked PDF certificates for emissions
 
 ### Shareholder Features  
 - Authentication and secure login
-- Personal dashboard with share holdings information
 - View all individual share emissions
 - Download associated PDF certificates
 
