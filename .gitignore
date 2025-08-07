@@ -1,0 +1,135 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.pyc
+*.pyd
+*.pyo
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# VSCode and IDEs
+.vscode/
+.idea/
+*.swp
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Pytest, coverage, mypy, tox, pip, poetry, pipenv, build, wheel, sphinx, etc.
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.cache/
+.tox/
+pip-wheel-metadata/
+pip-log.txt
+pip-delete-this-directory.txt
+pipenv.lock
+Pipfile.lock
+poetry.lock
+dist/
+build/
+.eggs/
+*.egg-info/
+.eggs/
+*.egg
+*.manifest
+*.spec
+*.tmp
+*.bak
+*.old
+*.orig
+*.log
+*.out
+*.pid
+*.tmp.*
+*.cache
+.cache/
+.cache/*
+
+# Alembic migration cache (keep versions folder, ignore pyc)
+alembic/versions/*.pyc
+
+# Database files, logs, outputs
+*.log
+*.sqlite3
+*.db
+
+# Certificates and generated PDFs
+certificates/
+*.pdf
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+*.pid
+
+# Ignore test output
+test-results/
+
+# Node/npm/yarn cache (if frontend or docs)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Sphinx documentation build
+docs/_build/
+docs/.doctrees/
+docs/.buildinfo
+
+# Caches from other tools
+*.cache/
+.cache/
+.cache/*
+
+# Editor/IDE caches
+*.sublime-workspace
+*.sublime-project
+*.idea/
+*.vscode/
+*.spyproject/
+*.ropeproject/
+*.nvimlog
+
+# Miscellaneous
+*.tmp
+*.bak
+*.old
+*.orig
+*.swp
+*.swo
+*.swn
+*.swo
+*.swn
+*.tmp.*
+*.~*
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
