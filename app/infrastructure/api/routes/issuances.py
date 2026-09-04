@@ -1,31 +1,36 @@
+import logging
+import os
+from datetime import date
+from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
-from decimal import Decimal
-from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, conint
-from app.domain.exceptions import DomainException
-from app.infrastructure.api.auth.dependencies import get_admin_user, get_shareholder_user, get_current_user_with_role
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.application.commands.issuance_commands import CreateIssuanceCommand
+from app.application.dtos.dashboard_dtos import IssuanceSummaryDTO
+from app.application.handlers.command_handlers import CreateIssuanceHandler
+from app.application.handlers.query_handlers import GetIssuancesHandler
+from app.application.services.audit_service import AuditService
+from app.application.services.certificate_service import CertificateGenerationService
+from app.domain.entities.audit_event import AuditActionType, AuditEntityType
+from app.domain.exceptions import AccessDeniedException, DomainException
+from app.infrastructure.api.auth.dependencies import get_admin_user, get_shareholder_user
+from app.infrastructure.api.dependencies import get_audit_service
 from app.infrastructure.database.connection import get_db
 from app.infrastructure.database.repositories.company_repository import PostgresCompanyRepository
-from app.infrastructure.database.repositories.shareholder_profile_repository import PostgresShareholderProfileRepository
-from app.infrastructure.database.repositories.shareholder_repository import PostgresShareholderRepository
 from app.infrastructure.database.repositories.issuance_repository import PostgresShareIssuanceRepository
+from app.infrastructure.database.repositories.share_certificate_repository import PostgresShareCertificateRepository
+from app.infrastructure.database.repositories.shareholder_profile_repository import PostgresShareholderProfileRepository
+from app.infrastructure.database.repositories.user_repository import PostgresUserRepository
+from app.infrastructure.services.email_service import ConsoleEmailService
 from app.infrastructure.services.event_service import InMemoryEventPublisher
 from app.infrastructure.services.pdf_service import WeasyPrintPdfGenerator
-from app.infrastructure.services.email_service import ConsoleEmailService
-from app.application.commands.issuance_commands import CreateIssuanceCommand
-from app.application.handlers.command_handlers import CreateIssuanceHandler
-from app.application.handlers.query_handlers import (
-    GetIssuancesHandler
-)
-from app.infrastructure.api.dependencies import get_audit_service
-from app.application.services.audit_service import AuditService
-from app.domain.entities.audit_event import AuditActionType, AuditEntityType
-from app.application.dtos.dashboard_dtos import IssuanceSummaryDTO
-from sqlalchemy.ext.asyncio import AsyncSession
-import os
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/issuances", tags=["Issuances"])
 
@@ -37,6 +42,27 @@ class CreateIssuanceRequest(BaseModel):
     price_per_share: Decimal
     currency: str = "EUR"
     issue_date: Optional[date] = None
+
+
+def _build_certificate_service(db: AsyncSession) -> CertificateGenerationService:
+    return CertificateGenerationService(
+        issuance_repository=PostgresShareIssuanceRepository(db),
+        profile_repository=PostgresShareholderProfileRepository(db),
+        user_repository=PostgresUserRepository(db),
+        certificate_repository=PostgresShareCertificateRepository(db),
+        pdf_generator=WeasyPrintPdfGenerator(),
+        event_publisher=InMemoryEventPublisher()
+    )
+
+
+def _pdf_response(issuance_id: UUID, storage_path: str) -> FileResponse:
+    filename = f"share_certificate_{issuance_id}.pdf"
+    return FileResponse(
+        path=storage_path,
+        filename=filename,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 @router.get(
@@ -73,33 +99,19 @@ async def get_issuances(
     current_user: dict = Depends(get_shareholder_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get issuances - all for admin, own for shareholder"""
-    
-    # REPOSITORIES CORRIGÉS
-    issuance_repo = PostgresShareIssuanceRepository(db)
-    profile_repo = PostgresShareholderProfileRepository(db)  # CORRIGÉ
-    user_repo = PostgresUserRepository(db)  # AJOUTÉ
-    
-    # HANDLER AVEC LES BONS REPOSITORIES
+    """Get issuances: all of them for an admin, only their own for a shareholder."""
     handler = GetIssuancesHandler(
-        issuance_repository=issuance_repo,
-        profile_repository=profile_repo,  # CORRIGÉ
-        user_repository=user_repo  # AJOUTÉ
+        issuance_repository=PostgresShareIssuanceRepository(db),
+        profile_repository=PostgresShareholderProfileRepository(db),
+        user_repository=PostgresUserRepository(db)
     )
-    
+
     try:
-        print(f"Getting issuances for user {current_user['id']} (role: {current_user['role']})")
-        result = await handler.handle(current_user)
-        print(f"Returning {len(result)} issuances")
-        return result
-        
-    except DomainException as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except Exception as e:
-        print(f"Unexpected error: {e}")
+        return await handler.handle(current_user)
+    except DomainException as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception:
+        logger.exception("Unexpected error while listing issuances")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred"
@@ -140,37 +152,22 @@ async def create_issuance(
     """
     Crée une nouvelle émission d'actions pour un actionnaire donné (admin uniquement).
 
-    - **shareholder_id** : UUID du profil actionnaire
-    - **share_class_id** : Identifiant de la classe d'actions (ex : "ordinary")
-    - **quantity** : Nombre d'actions à émettre
-    - **price_per_share** : Prix unitaire de l'action
-    - **currency** : Devise (ex : "EUR")
-    - **issue_date** : Date d'émission (optionnelle)
-
-    ### Exemple de test (curl) :
-    ```
-    curl -X POST "http://localhost:8000/api/issuances/" -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"shareholder_id":"<uuid>","share_class_id":"ordinary","quantity":100,"price_per_share":1.5,"currency":"EUR"}'
-    ```
-
-    Remplacez `<token>` par le JWT admin et `<uuid>` par l'UUID du profil actionnaire.
+    - **shareholder_id** : UUID du profil actionnaire
+    - **share_class_id** : Identifiant de la classe d'actions (ex : "ordinary")
+    - **quantity** : Nombre d'actions à émettre
+    - **price_per_share** : Prix unitaire de l'action
+    - **currency** : Devise (ex : "EUR")
+    - **issue_date** : Date d'émission (optionnelle)
     """
     try:
-        # Tous les repositories nécessaires
-        company_repo = PostgresCompanyRepository(db)        # AJOUTÉ
-        shareholder_repo = PostgresShareholderProfileRepository(db)
-        issuance_repo = PostgresShareIssuanceRepository(db)
-        event_publisher = InMemoryEventPublisher()
-
-        # Handler avec company_repository
         handler = CreateIssuanceHandler(
-            company_repository=company_repo,
-            shareholder_repository=shareholder_repo,
-            issuance_repository=issuance_repo,
-            event_publisher=event_publisher,
+            company_repository=PostgresCompanyRepository(db),
+            shareholder_repository=PostgresShareholderProfileRepository(db),
+            issuance_repository=PostgresShareIssuanceRepository(db),
+            event_publisher=InMemoryEventPublisher(),
             email_service=ConsoleEmailService()
         )
 
-        # Commande (inchangée)
         command = CreateIssuanceCommand(
             shareholder_profile_id=request.shareholder_id,
             share_class_id=request.share_class_id,
@@ -180,13 +177,9 @@ async def create_issuance(
             issue_date=request.issue_date
         )
 
-        print(f"Creating issuance for shareholder {request.shareholder_id}")
         result = await handler.handle(command)
 
-        # Audit log
         try:
-            ip_address = http_request.client.host if http_request and http_request.client else ""
-            user_agent = http_request.headers.get("user-agent", "") if http_request else ""
             await audit_service.log_event(
                 action_type=AuditActionType.SHARE_ISSUANCE_CREATED,
                 user_id=current_user["id"],
@@ -198,34 +191,27 @@ async def create_issuance(
                     "price_per_share": str(request.price_per_share),
                     "currency": request.currency
                 },
-                ip_address=ip_address,
-                user_agent=user_agent
+                ip_address=http_request.client.host if http_request and http_request.client else "",
+                user_agent=http_request.headers.get("user-agent", "") if http_request else ""
             )
-        except Exception as e:
-            print(f"Audit log failed: {e}")
+        except Exception:
+            # An audit write must never swallow a successful issuance, but it must
+            # be visible in the logs when it fails.
+            logger.exception("Audit log failed for issuance %s", result.get("issuance_id"))
 
         return result
 
-    except (ValueError, TypeError) as ve:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(ve)
-        )
-    except DomainException as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except Exception as e:
-        print(f"Unexpected error: {e}")
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except DomainException as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception:
+        logger.exception("Unexpected error while creating an issuance")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred"
         )
 
-from app.infrastructure.database.repositories.user_repository import PostgresUserRepository
-from app.infrastructure.database.repositories.share_certificate_repository import PostgresShareCertificateRepository
-from app.application.services.certificate_service import CertificateGenerationService
 
 @router.get(
     "/{issuance_id}/certificate/",
@@ -236,17 +222,14 @@ from app.application.services.certificate_service import CertificateGenerationSe
             "description": "Certificat PDF généré et retourné avec succès",
             "content": {
                 "application/pdf": {
-                    "schema": {
-                        "type": "string",
-                        "format": "binary"
-                    },
+                    "schema": {"type": "string", "format": "binary"},
                     "example": "Fichier PDF binaire"
                 }
             }
         },
-        400: {"description": "Erreur métier (accès refusé, émission introuvable, etc.)"},
         401: {"description": "Non autorisé (token requis)"},
-        404: {"description": "Certificat introuvable"},
+        403: {"description": "Hors périmètre (émission appartenant à un autre actionnaire)"},
+        404: {"description": "Émission ou certificat introuvable"},
         422: {"description": "Erreur de validation des données"}
     },
     openapi_extra={"security": [{"BearerAuth": []}]}
@@ -256,119 +239,61 @@ async def generate_and_download_certificate(
     current_user: dict = Depends(get_shareholder_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Génère et retourne le certificat PDF pour une émission d'actions donnée.
-    """
-    print(f"Generating certificate for issuance {issuance_id} by user {current_user['id']}")
-    
-    # Repositories et services
-    issuance_repo = PostgresShareIssuanceRepository(db)
-    profile_repo = PostgresShareholderProfileRepository(db)
-    user_repo = PostgresUserRepository(db)
+    """Return the PDF certificate of an issuance the caller is entitled to."""
+    certificate_service = _build_certificate_service(db)
     certificate_repo = PostgresShareCertificateRepository(db)
-    pdf_generator = WeasyPrintPdfGenerator()
-    event_publisher = InMemoryEventPublisher()
-    
-    # Service de génération de certificat
-    certificate_service = CertificateGenerationService(
-        issuance_repository=issuance_repo,
-        profile_repository=profile_repo,
-        user_repository=user_repo,
-        certificate_repository=certificate_repo,
-        pdf_generator=pdf_generator,
-        event_publisher=event_publisher
-    )
-    
-    try:
-        # Vérifier si un certificat existe déjà pour cette issuance
-        existing_certificate = await certificate_repo.find_by_issuance_id(issuance_id)
-        if existing_certificate:
-            if existing_certificate.storage_path and os.path.exists(existing_certificate.storage_path):
-                print(f"Certificate already exists for issuance {issuance_id}, returning existing PDF.")
-                return FileResponse(
-                    path=existing_certificate.storage_path,
-                    filename=f"share_certificate_{issuance_id}.pdf",
-                    media_type="application/pdf",
-                    headers={
-                        "Content-Disposition": f"attachment; filename=share_certificate_{issuance_id}.pdf"
-                    }
-                )
-            else:
-                # Le certificat existe en base mais le fichier PDF est absent : régénérer le PDF à partir de l'issuance
-                print(f"Certificate exists in DB but PDF file is missing. Regenerating PDF for issuance {issuance_id}.")
-                # On récupère l'issuance pour régénérer le PDF
-                issuance = await issuance_repo.find_by_id(issuance_id)
-                if not issuance:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="Issuance not found for certificate regeneration"
-                    )
-                # Générer le PDF (synchroniquement)
-                pdf_generator = WeasyPrintPdfGenerator()
-                regenerated_certificate = pdf_generator.generate_share_certificate(issuance)
-                # Mettre à jour le storage_path du certificat existant si besoin
-                existing_certificate.storage_path = regenerated_certificate.storage_path
-                await certificate_repo.save(existing_certificate)
-                if not os.path.exists(existing_certificate.storage_path):
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Certificate file could not be regenerated"
-                    )
-                return FileResponse(
-                    path=existing_certificate.storage_path,
-                    filename=f"share_certificate_{issuance_id}.pdf",
-                    media_type="application/pdf",
-                    headers={
-                        "Content-Disposition": f"attachment; filename=share_certificate_{issuance_id}.pdf"
-                    }
-                )
 
-        # Sinon, générer le certificat (cas normal)
-        certificate = await certificate_service.generate_certificate_for_issuance(
+    try:
+        # Scope check first, unconditionally. Every branch below returns a document
+        # derived from this issuance, so none of them may run before this succeeds.
+        await certificate_service.authorize_issuance_access(
             issuance_id=issuance_id,
             requesting_user_id=UUID(current_user["id"]),
             requesting_user_role=current_user["role"]
         )
-        
-        # Vérifier que le fichier existe
-        if not os.path.exists(certificate.storage_path):
+
+        certificate = await certificate_repo.find_by_issuance_id(issuance_id)
+
+        if certificate is None:
+            certificate = await certificate_service.generate_certificate_for_issuance(
+                issuance_id=issuance_id,
+                requesting_user_id=UUID(current_user["id"]),
+                requesting_user_role=current_user["role"]
+            )
+        elif not certificate.storage_path or not os.path.exists(certificate.storage_path):
+            certificate = await certificate_service.regenerate_pdf(issuance_id, certificate)
+
+        if not certificate.storage_path or not os.path.exists(certificate.storage_path):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Certificate file not found after generation"
+                detail="Certificate file could not be produced"
             )
-        
-        # Retourner le fichier PDF
-        return FileResponse(
-            path=certificate.storage_path,
-            filename=f"share_certificate_{issuance_id}.pdf",
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"attachment; filename=share_certificate_{issuance_id}.pdf"
-            }
-        )
-        
-    except DomainException as e:
-        # Erreurs métier (accès refusé, issuance introuvable, etc.)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Certificate file not found"
-        )
-    except Exception as e:
-        print(f"Unexpected error generating certificate: {e}")
+
+        return _pdf_response(issuance_id, certificate.storage_path)
+
+    except AccessDeniedException as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except DomainException as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error while serving certificate for issuance %s", issuance_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while generating the certificate"
         )
 
 
-# Alternative: Route qui retourne les métadonnées du certificat
 @router.get(
     "/{issuance_id}/certificate/info/",
+    summary="Métadonnées du certificat d'une émission",
+    description="Retourne les métadonnées du certificat sans générer ni télécharger le fichier. Accessible à l'actionnaire concerné ou à l'admin.",
+    responses={
+        401: {"description": "Non autorisé (token requis)"},
+        403: {"description": "Hors périmètre (émission appartenant à un autre actionnaire)"},
+        404: {"description": "Aucun certificat pour cette émission"}
+    },
     openapi_extra={"security": [{"BearerAuth": []}]}
 )
 async def get_certificate_info(
@@ -376,19 +301,27 @@ async def get_certificate_info(
     current_user: dict = Depends(get_shareholder_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get certificate information without generating/downloading the file
-    """
-    certificate_repo = PostgresShareCertificateRepository(db)
-    
-    certificate = await certificate_repo.find_by_issuance_id(issuance_id)
-    
+    """Return certificate metadata, under the same scope check as the download."""
+    certificate_service = _build_certificate_service(db)
+
+    try:
+        await certificate_service.authorize_issuance_access(
+            issuance_id=issuance_id,
+            requesting_user_id=UUID(current_user["id"]),
+            requesting_user_role=current_user["role"]
+        )
+    except AccessDeniedException as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except DomainException as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    certificate = await PostgresShareCertificateRepository(db).find_by_issuance_id(issuance_id)
     if not certificate:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No certificate found for this issuance"
         )
-    
+
     return {
         "certificate_id": str(certificate.id),
         "issuance_id": str(certificate.share_issuance_id),
