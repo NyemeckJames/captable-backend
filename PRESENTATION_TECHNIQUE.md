@@ -360,7 +360,7 @@ python -c "from app.infrastructure.database.connection import async_engine; impo
 python -c "import secrets; print(secrets.token_hex(32))"
 
 # Créer un utilisateur admin via CLI
-python -c "from app.main import initialize_default_data; import asyncio; asyncio.run(initialize_default_data())"
+python -m scripts.seed_admin
 ```
 
 ## 8. Éléments Additionnels Non Mentionnés
