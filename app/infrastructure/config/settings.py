@@ -1,9 +1,11 @@
+from typing import List, Optional
+
 from pydantic_settings import BaseSettings
-from typing import Optional
 
 
 class Settings(BaseSettings):
-    # Obligatoire : chargée depuis .env
+    # Required, loaded from .env. No defaults on purpose: a missing secret must
+    # stop the application at boot rather than fall back to a known value.
     secret_key: str
     algorithm: str
     access_token_expire_minutes: int
@@ -11,19 +13,30 @@ class Settings(BaseSettings):
     company_name: str
     company_authorized_shares: int
 
-    # Initialisation de l'admin
+    # Credentials of the bootstrap admin, consumed by scripts/seed_admin.py only.
     admin_email: str
     admin_password: str
     admin_role: str
     admin_name: str
-    
+
     db_host: str
     db_port: str
     db_user: str
     db_password: str
 
-    # Facultatif (tu peux garder une valeur par défaut ici si besoin)
-    debug: bool = True
+    # Operational switches. Defaults are the safe ones: anything that widens the
+    # exposed surface has to be turned on explicitly.
+    environment: str = "production"
+    debug: bool = False
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.strip().lower() in {"production", "prod"}
+
+    @property
+    def cors_origin_list(self) -> List[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     class Config:
         env_file = ".env"

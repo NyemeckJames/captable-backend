@@ -30,7 +30,9 @@ echo.
 echo 4. Creation du fichier de configuration...
 if not exist .env (
     copy .env.example .env
-    echo Fichier .env cree avec les parametres par defaut
+    echo Fichier .env cree a partir du modele.
+    echo Renseignez SECRET_KEY, les acces PostgreSQL et ADMIN_PASSWORD avant de continuer.
+    pause
 )
 
 echo.
@@ -48,6 +50,15 @@ echo 6. Execution des migrations...
 alembic upgrade head
 if errorlevel 1 (
     echo ERREUR: Migration de la base de donnees echouee
+    pause
+    exit /b 1
+)
+
+echo.
+echo 7. Creation de la societe et du compte admin...
+python -m scripts.seed_admin
+if errorlevel 1 (
+    echo ERREUR: Creation du compte admin echouee
     pause
     exit /b 1
 )
