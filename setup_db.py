@@ -18,7 +18,7 @@ def create_database():
     databases_to_create = ["captable", "captable_test"]
     
     try:
-        print(f"Connexion avec: {DB_USER=}, {DB_PASSWORD=}, {DB_HOST=}, {DB_PORT=}")
+        print(f"Connexion a PostgreSQL sur {DB_HOST}:{DB_PORT} en tant que {DB_USER}")
         # Connexion à la base postgres par défaut
         conn = psycopg2.connect(
             host=DB_HOST,

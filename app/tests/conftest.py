@@ -183,14 +183,12 @@ async def shareholder_user(db_session):
 
     # Stocker le mot de passe en clair pour les tests
     user.plain_password = password
-    print(f"Created shareholder user: {user.email} with plain password: {user.plain_password}")
     return user, profile
 
 @pytest.fixture(scope="function")
 async def shareholder_token(async_client, shareholder_user):
     """Génère un token JWT pour l'utilisateur shareholder."""
     user, profile = shareholder_user  # Déstructuration du tuple
-    print
     response = await async_client.post(
         "/api/token/",
         json={

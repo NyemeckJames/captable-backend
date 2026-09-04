@@ -1,3 +1,4 @@
+import logging
 from typing import List
 from uuid import UUID
 from app.application.queries.dashboard_queries import (
@@ -21,6 +22,9 @@ from app.domain.entities.share_issuance import ShareIssuance
 from app.application.queries.certificate_queries import GetIssuanceForCertificateQuery
 from app.application.queries.audit_queries import GetAuditEventsQuery
 from app.application.dtos.audit_dtos import AuditEventDTO
+
+logger = logging.getLogger(__name__)
+
 
 class GetAdminDashboardHandler:
     def __init__(
@@ -131,19 +135,16 @@ class GetIssuancesHandler:
     async def _handle_shareholder_view(self, user_id: str) -> List[IssuanceSummaryDTO]:
         """Vue shareholder : seulement ses propres émissions"""
         
-        print(f"Looking for shareholder profile for user_id: {user_id}")
         
         # 1️⃣ Trouver le profil shareholder associé à ce user_id
         profile = await self.profile_repository.find_by_user_id(UUID(user_id))
         if not profile:
             raise DomainException(f"No shareholder profile found for user {user_id}")
         
-        print(f"Found shareholder profile: {profile.id} (name: {profile.name})")
         
         # 2️⃣ Récupérer SEULEMENT les émissions de ce profil
         issuances = await self.issuance_repository.find_by_shareholder_profile_id(profile.id)
         
-        print(f"Found {len(issuances)} issuances for profile {profile.id}")
         
         # 3️⃣ Transformer en DTO avec le nom du profil
         return [

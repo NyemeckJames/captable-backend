@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
@@ -7,6 +8,8 @@ from app.infrastructure.config.settings import get_settings
 from app.infrastructure.api.dependencies import get_audit_service
 from app.application.services.audit_service import AuditService
 from app.domain.entities.audit_event import AuditActionType, AuditEntityType
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["Auth"])
 settings = get_settings()
@@ -66,7 +69,6 @@ async def login_for_access_token(
     Use the returned token in the header: `Authorization: Bearer <token>` for protected endpoints.
     """
     user = await authenticate_user(payload.email, payload.password)
-    print(f"Authenticated user: {user}")  # Debugging line to check user authentication
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -91,8 +93,8 @@ async def login_for_access_token(
             ip_address=ip_address,
             user_agent=user_agent
         )
-    except Exception as e:
-        print(f"Audit log failed: {e}")
+    except Exception:
+        logger.exception("Audit log failed for a login event")
 
     return {
         "access_token": access_token,

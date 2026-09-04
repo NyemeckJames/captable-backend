@@ -62,7 +62,6 @@ async def authenticate_user(username: str, password: str) -> Optional[Dict[str, 
             "role": db_user.role,
             "name": db_user.email  # par défaut
         }
-        print(f"Authenticated user: {db_user.shareholder_profile}")
 
         # Si c'est un actionnaire, ajouter les infos métiers du shareholder
         if db_user.role == "shareholder" and db_user.shareholder_profile:

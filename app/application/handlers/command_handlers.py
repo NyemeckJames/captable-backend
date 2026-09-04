@@ -1,3 +1,4 @@
+import logging
 import asyncio
 from uuid import UUID
 from app.application.commands.user_commands import CreateUserCommand
@@ -19,6 +20,8 @@ from app.domain.value_objects.money import Money
 from app.domain.exceptions import DomainException
 from app.infrastructure.api.auth.jwt_handler import get_password_hash
 from app.application.ports.email_service import IEmailService
+
+logger = logging.getLogger(__name__)
 
 
 class CreateUserHandler:
@@ -149,17 +152,14 @@ class CreateIssuanceHandler:
         
         # 1. Validation commande
         command.validate()
-        print(f"Handling issuance command: {command}")
         
-        # 2. NOUVEAU: Chargement de la Company (règles métier cruciales)
+        # 2. Chargement de la Company (règles métier cruciales)
         company = await self.company_repository.find_the_company()
         if not company:
             raise DomainException("Company not found. Please initialize company first.")
-        print(f"Found company: {company.name} (Authorized: {company.authorized_shares.value}, Issued: {company.issued_shares.value})")
         
         # 3. Validation actionnaire
         shareholder = await self.shareholder_repository.find_by_id(command.shareholder_profile_id)
-        print(f"Found shareholder: {shareholder}")
         if not shareholder:
             raise DomainException(f"Shareholder profile {command.shareholder_profile_id} not found")
 
@@ -167,7 +167,7 @@ class CreateIssuanceHandler:
         quantity = ShareQuantity(command.quantity)
         price = Money(command.price_per_share, command.currency)
         
-        # 5. NOUVEAU: Utilisation de la logique métier Company.issue_shares()
+        # 5. Utilisation de la logique métier Company.issue_shares()
         # Cette méthode contient toute la validation métier (limites, classes d'actions, etc.)
         try:
             issuance = company.issue_shares(
@@ -177,23 +177,19 @@ class CreateIssuanceHandler:
                 price_per_share=price,
                 issue_date=command.issue_date
             )
-            print(f"Company issued shares: {issuance}")
-            print(f"Company state after issuance - Issued: {company.issued_shares.value}/{company.authorized_shares.value}")
             
         except DomainException as e:
             # Erreurs métier de la Company (ex: dépassement autorisé, classe inexistante)
             raise e
         
-        # 6. CRUCIAL: Persistance de l'état modifié de la Company
+        # 6. Persistance de l'état modifié de la Company
         # La Company a été modifiée (issued_shares mis à jour, issuance ajoutée)
         try:
             # Sauvegarder l'état modifié de la company en premier
             await self.company_repository.save(company)
-            print(f"Saved company state")
             
             # Puis sauvegarder l'issuance pour les requêtes optimisées
             saved_issuance = await self.issuance_repository.save(issuance)
-            print(f"Saved issuance: {saved_issuance}")
 
             # Simulate email notification to shareholder
             if hasattr(shareholder, "email"):
@@ -223,7 +219,6 @@ class CreateIssuanceHandler:
             issue_date=saved_issuance.issue_date
         )
         await self.event_publisher.publish(event)
-        print(f"Published event: {event}")
 
         return {
             "issuance_id": str(saved_issuance.id),

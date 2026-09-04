@@ -1,13 +1,18 @@
-from typing import List
+import logging
+
 from app.application.ports.event_publisher import IEventPublisher
 from app.domain.events.base import DomainEvent, EventRegistry
 
+logger = logging.getLogger(__name__)
+
 
 class InMemoryEventPublisher(IEventPublisher):
-    """Simple in-memory event publisher for demonstration"""
-    
+    """In-process publisher standing in for a broker.
+
+    The port is what matters here: replacing this adapter with a real queue
+    changes no caller.
+    """
+
     async def publish(self, event: DomainEvent) -> None:
-        # In a real implementation, this would publish to a message queue
-        # For now, we just register it in memory
         EventRegistry.register(event)
-        print(f"Event published: {event.__class__.__name__} - {event.event_id}")
+        logger.debug("Event published: %s %s", event.__class__.__name__, event.event_id)
