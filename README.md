@@ -37,7 +37,7 @@ captable-backend/
 │   └── tests/                  # unit/ and integration/
 ├── scripts/seed_admin.py       # Bootstrap company and admin account
 ├── .github/workflows/ci.yml    # Byte-compile and test on every push
-├── docker-compose.yml
+├── docker-compose.yml          # PostgreSQL, the API, and a one-shot test runner
 └── Dockerfile
 ```
 
@@ -95,18 +95,29 @@ python run.py                    # starts the API on http://127.0.0.1:8000
 
 ## Tests
 
+Against a local PostgreSQL, with `TEST_DATABASE_URL` pointing at it:
+
 ```bash
 pytest -q
 ```
 
-Unit tests cover the domain rules and the access rules with mocked ports. Integration
-tests run against a real PostgreSQL (`TEST_DATABASE_URL`, defaulting to
-`captable_test`), because the constraints being exercised belong to the schema as
-much as to the code.
+Or through the stack, which needs nothing installed and no port published on the
+host:
+
+```bash
+docker compose --profile test run --rm tests
+```
+
+Unit tests cover the domain rules and the access rules with mocked ports.
+Integration tests run against a real PostgreSQL rather than a substitute, because
+the constraints being exercised belong to the schema as much as to the code.
 
 The scope tests in `app/tests/integration/api/test_certificate_access.py` are
 regression tests: they set up the exact state in which the perimeter used to be
 bypassable and assert a 403.
+
+On Windows, `conftest.py` switches asyncio to the selector event loop: asyncpg
+cannot run on the Proactor loop Python selects there by default.
 
 CI runs the byte-compilation and the full suite against PostgreSQL 16 on every push.
 

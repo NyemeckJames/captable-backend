@@ -1,5 +1,7 @@
-import pytest
 import asyncio
+import sys
+
+import pytest
 from httpx import AsyncClient
 from app.main import app
 from app.infrastructure.database.connection import Base
@@ -8,6 +10,13 @@ from app.infrastructure.database.models import CompanyModel
 from app.infrastructure.api.auth.jwt_handler import get_password_hash
 from sqlalchemy import select
 from uuid import UUID, uuid4
+
+if sys.platform == "win32":
+    # asyncpg cannot run on the Proactor loop Windows selects by default: the
+    # connection is reset mid-handshake. Without this the whole integration suite
+    # is unrunnable on a Windows workstation.
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 
 @pytest.fixture(scope="session")
 def event_loop():
